@@ -100,6 +100,17 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--ink);outline-offset
 .hint{position:absolute;bottom:12px;left:0;right:0;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute)}
 .say{position:absolute;top:12px;right:12px;width:44px;height:44px;border:1.5px solid var(--ink);display:grid;place-items:center}
 .say svg{width:20px;height:20px}
+.voice{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:0 0 16px;font-size:13px}
+.voice label{font-weight:800;text-transform:uppercase;letter-spacing:.08em;font-size:11px}
+.voice select{font:inherit;font-size:14px;padding:10px;border:2px solid var(--ink);background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.voice .btn{padding:10px 14px}
+.swipe-wrap{overflow:hidden;padding:4px}
+.card{touch-action:pan-y;will-change:transform}
+.stamp{position:absolute;top:18px;padding:6px 12px;border:3px solid var(--ink);font-weight:800;font-size:18px;letter-spacing:.08em;text-transform:uppercase;opacity:0;transition:opacity .1s;pointer-events:none}
+.stamp.yes{left:18px;transform:rotate(-8deg)}
+.stamp.no{right:70px;transform:rotate(8deg);color:var(--bad);border-color:var(--bad)}
+.card.to-yes .stamp.yes,.card.to-no .stamp.no{opacity:1}
+.swipehelp{display:flex;justify-content:space-between;margin-top:10px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute)}
 .answer{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
 .answer .btn{width:100%;padding:16px}
 .answer .no{border-color:var(--ink)}
@@ -155,16 +166,48 @@ function giant(word, h = 420){
 }
 
 /* ── озвучка французским голосом устройства ── */
-let FRV = null;
-function pickVoice(){ try { const v = speechSynthesis.getVoices(); FRV = v.find(x => /^fr(-|_)FR/i.test(x.lang)) || v.find(x => /^fr/i.test(x.lang)) || null; } catch (e) {} }
+let FRV = null, VOICES = [];
+let VNAME = ''; try { VNAME = localStorage.getItem('cartes-voice') || ''; } catch (e) {}
+const FEMALE = ['audrey', 'marie', 'aurélie', 'aurelie', 'amélie', 'amelie', 'virginie', 'julie', 'hortense', 'céline', 'celine', 'léa', 'lea', 'chantal', 'denise', 'eloise', 'élise', 'google français'];
+const MALE = ['thomas', 'daniel', 'nicolas', 'paul', 'henri', 'jacques', 'antoine', 'claude', 'grandpa', 'rocko', 'eddy', 'reed'];
+function vscore(v){
+  const n = v.name.toLowerCase(), l = (v.lang || '').toLowerCase().replace('_', '-');
+  let s = 0;
+  if (l === 'fr-fr') s += 20; else if (l.startsWith('fr')) s += 8;
+  if (FEMALE.some(f => n.includes(f))) s += 12;
+  if (MALE.some(f => n.includes(f))) s -= 30;
+  if (/premium/.test(n)) s += 9; if (/enhanced|amélior|ameliore|natural|neural/.test(n)) s += 7;
+  if (/compact|eloquence/.test(n)) s -= 4;
+  return s;
+}
+function pickVoice(){
+  try {
+    VOICES = speechSynthesis.getVoices().filter(v => /^fr/i.test(v.lang || ''));
+    VOICES.sort((a, b) => vscore(b) - vscore(a));
+    FRV = VOICES.find(v => v.name === VNAME) || VOICES[0] || null;
+  } catch (e) {}
+}
 try { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; } catch (e) {}
+function sayText(t){
+  return t.replace(/\((?:m|f|m\/f|e|ê|ê\/avoir|qqn|qqch)\)/g, '').replace(/\(([^)]*)\)/g, '$1')
+          .replace(/…/g, '').replace(/\s*\/\s*/g, '. ').replace(/\s+/g, ' ').trim();
+}
 function speak(t){
-  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t.replace(/\(.*?\)/g, '').replace(/\//g, ',')); u.lang = 'fr-FR'; if (FRV) u.voice = FRV; u.rate = .9; speechSynthesis.speak(u); } catch (e) {}
+  try {
+    speechSynthesis.cancel();
+    if (!FRV) pickVoice();
+    const u = new SpeechSynthesisUtterance(sayText(t));
+    u.lang = FRV ? FRV.lang : 'fr-FR'; if (FRV) u.voice = FRV;
+    u.rate = 0.78; u.pitch = 1.04; u.volume = 1;
+    speechSynthesis.speak(u);
+  } catch (e) {}
 }
 const canSpeak = 'speechSynthesis' in window;
 const SAY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>`;
 
 /* ── экраны ── */
+let SOUND = true;
+try { SOUND = localStorage.getItem('cartes-sound') !== 'off'; } catch (e) {}
 let dir = 'fr';   // fr: французский → русский; ru: русский → французский
 try { dir = localStorage.getItem('cartes-dir') || 'fr'; } catch (e) {}
 
@@ -194,13 +237,19 @@ function deck(n){
     <button class="btn" id="m-test">Тест</button>
     <span class="seg" role="group" aria-label="Направление">
       <button aria-pressed="${dir === 'fr'}" data-d="fr">FR → RU</button><button aria-pressed="${dir === 'ru'}" data-d="ru">RU → FR</button></span>
+    ${canSpeak ? `<span class="seg" role="group" aria-label="Звук"><button aria-pressed="${SOUND}" id="snd">Звук ${SOUND ? 'вкл' : 'выкл'}</button></span>` : ''}
   </div>
+  ${canSpeak && VOICES.length ? `<div class="voice"><label for="vsel">Голос</label><select id="vsel">${VOICES.map(v => `<option value="${esc(v.name)}" ${FRV && v.name === FRV.name ? 'selected' : ''}>${esc(v.name)} · ${esc(v.lang)}</option>`).join('')}</select><button class="btn" id="vtest">Прослушать</button></div>` : ''}
   <ul class="list">${d.cards.map((c, i) => `<li><span class="dot b${box(n, i)}"></span><span><span class="lf">${esc(c[0])}</span><br><span class="lr">${esc(c[2])}</span></span></li>`).join('')}</ul>
   <p class="note">Квадрат: пустой — новое слово, наполовину — учу, закрашен — выучено.</p>`;
   app.querySelector('#bk').onclick = () => go('');
   app.querySelector('#m-cards').onclick = () => session(n, 'cards');
   app.querySelector('#m-test').onclick = () => session(n, 'test');
-  app.querySelectorAll('.seg button').forEach(b => b.onclick = () => { dir = b.dataset.d; try { localStorage.setItem('cartes-dir', dir); } catch (e) {} deck(n); });
+  const vsel = app.querySelector('#vsel');
+  if (vsel) vsel.onchange = () => { VNAME = vsel.value; try { localStorage.setItem('cartes-voice', VNAME); } catch (e) {} FRV = VOICES.find(v => v.name === VNAME) || FRV; speak('Bonjour, je m\'appelle Audrey.'); };
+  const vtest = app.querySelector('#vtest'); if (vtest) vtest.onclick = () => speak('Bonjour ! La boulangerie est en face de la gare.');
+  const snd = app.querySelector('#snd'); if (snd) snd.onclick = () => { SOUND = !SOUND; try { localStorage.setItem('cartes-sound', SOUND ? 'on' : 'off'); } catch (e) {} if (SOUND) speak('Bonjour'); deck(n); };
+  app.querySelectorAll('.seg button[data-d]').forEach(b => b.onclick = () => { dir = b.dataset.d; try { localStorage.setItem('cartes-dir', dir); } catch (e) {} deck(n); });
 }
 
 function pickQueue(n, size = 20){
@@ -231,14 +280,34 @@ function session(n, mode){
   function render(){
     const i = queue[pos], c = d.cards[i];
     if (mode === 'cards'){
-      shell(`<div class="card" id="card" role="button" tabindex="0" aria-label="Перевернуть карточку"><div class="side">${flipped ? back(c) : front(c)}</div>
-        ${canSpeak ? `<button class="say" id="say" aria-label="Произнести">${SAY}</button>` : ''}<span class="hint">${flipped ? '' : 'нажмите, чтобы перевернуть'}</span></div>
-        ${flipped ? `<div class="answer"><button class="btn no" id="no">Не знаю</button><button class="btn fill" id="yes">Знаю</button></div>` : ''}`);
+      shell(`<div class="swipe-wrap"><div class="card" id="card" role="button" tabindex="0" aria-label="Перевернуть карточку. Влево — знаю, вправо — не знаю">
+        <span class="stamp yes">Знаю</span><span class="stamp no">Не знаю</span>
+        <div class="side">${flipped ? back(c) : front(c)}</div>
+        ${canSpeak ? `<button class="say" id="say" aria-label="Произнести">${SAY}</button>` : ''}
+        <span class="hint">${flipped ? '' : 'нажмите — перевернуть'}</span></div></div>
+        <div class="swipehelp"><span>← знаю</span><span>не знаю →</span></div>`);
       const card = app.querySelector('#card');
-      card.onclick = e => { if (e.target.closest('#say')) return; if (!flipped){ flipped = true; render(); if (dir === 'ru') speak(c[0]); } };
-      card.onkeydown = e => { if (e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); card.click(); } };
-      const say = app.querySelector('#say'); if (say) say.onclick = () => speak(c[0]);
-      if (flipped){ app.querySelector('#no').onclick = () => { mark(i, false); next(); }; app.querySelector('#yes').onclick = () => { mark(i, true); next(); }; }
+      const say = app.querySelector('#say'); if (say) say.onclick = e => { e.stopPropagation(); speak(c[0]); };
+      if (!flipped && dir === 'fr' && SOUND) speak(c[0]);
+      const flip = () => { if (!flipped){ flipped = true; render(); if (dir === 'ru' && SOUND) speak(c[0]); } };
+      const decide = ok => { if (locked) return; locked = true;
+        card.style.transition = 'transform .22s ease-in, opacity .22s';
+        card.style.transform = `translateX(${ok ? -130 : 130}%) rotate(${ok ? -14 : 14}deg)`; card.style.opacity = '0';
+        setTimeout(() => { mark(i, ok); next(); }, 210); };
+      let sx = null, sy = 0, dx = 0;
+      card.addEventListener('pointerdown', e => { if (e.target.closest('#say')) return; sx = e.clientX; sy = e.clientY; dx = 0; card.setPointerCapture(e.pointerId); card.style.transition = 'none'; });
+      card.addEventListener('pointermove', e => { if (sx === null) return; dx = e.clientX - sx;
+        card.style.transform = `translateX(${dx}px) rotate(${dx / 22}deg)`;
+        card.classList.toggle('to-yes', dx < -30); card.classList.toggle('to-no', dx > 30); });
+      const end = e => { if (sx === null) return; const moved = Math.abs(dx), vert = Math.abs((e.clientY || sy) - sy); sx = null;
+        card.classList.remove('to-yes', 'to-no');
+        if (moved > 90) return decide(dx < 0);
+        card.style.transition = 'transform .2s'; card.style.transform = '';
+        if (moved < 8 && vert < 8) flip(); };
+      card.addEventListener('pointerup', end); card.addEventListener('pointercancel', () => { sx = null; card.style.transform = ''; card.classList.remove('to-yes', 'to-no'); });
+      card.onkeydown = e => { if (e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); flip(); }
+        if (e.key === 'ArrowLeft') decide(true); if (e.key === 'ArrowRight') decide(false); };
+      card.focus({ preventScroll: true });
     } else {
       const others = d.cards.map((x, k) => k).filter(k => k !== i && d.cards[k][2] !== c[2]).sort(() => Math.random() - .5).slice(0, 3);
       const opts = [i, ...others].sort(() => Math.random() - .5);
@@ -246,12 +315,13 @@ function session(n, mode){
       shell(`<div class="card" style="cursor:default"><div class="side">${front(c)}</div>${canSpeak && dir === 'fr' ? `<button class="say" id="say" aria-label="Произнести">${SAY}</button>` : ''}</div>
         <div class="opts">${opts.map(k => `<button class="opt ${dir === 'ru' ? 'fr' : ''}" data-k="${k}">${label(k)}</button>`).join('')}</div>`);
       const say = app.querySelector('#say'); if (say) say.onclick = () => speak(c[0]);
+      if (dir === 'fr' && SOUND) speak(c[0]);
       app.querySelectorAll('.opt').forEach(b => b.onclick = () => {
         if (locked) return; locked = true;
         const k = +b.dataset.k, ok = k === i;
         b.classList.add(ok ? 'right' : 'wrong');
         if (!ok) app.querySelector(`.opt[data-k="${i}"]`).classList.add('right');
-        mark(i, ok); if (canSpeak) speak(c[0]);
+        mark(i, ok); if (canSpeak && SOUND && dir === 'ru') speak(c[0]);
         setTimeout(next, ok ? 700 : 1500);
       });
     }
